@@ -32,6 +32,10 @@ Single Node.js process that connects to WhatsApp, routes messages to Claude Agen
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
+## Git
+
+Never include `Co-Authored-By:` trailers in commit messages.
+
 ## Development
 
 Run commands directly—don't tell the user to run them.
