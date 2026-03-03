@@ -34,6 +34,12 @@ Text inside `<internal>` tags is logged but not sent to the user. If you've alre
 
 When working as a sub-agent or teammate, only use `send_message` if instructed to by the main agent.
 
+## Photos and Images
+
+When a message contains `[Photo: /workspace/group/images/filename.jpg]`, the image has been downloaded and saved at that path. Use the `Read` tool on that path to view it — the Read tool is multimodal and will show you the image visually.
+
+Example: if a message says `[Photo: /workspace/group/images/42.jpg]`, immediately call Read on `/workspace/group/images/42.jpg` to see what's in the photo before responding.
+
 ## Your Workspace
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
