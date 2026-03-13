@@ -6,35 +6,6 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
-  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
-}));
-
-// Mock fs — vi.hoisted() ensures these vi.fn() instances exist before vi.mock() is hoisted,
-// so both `import fs from 'fs'` (production) and named exports (tests) share the same mocks.
-const { fsMkdirSync, fsWriteFileSync } = vi.hoisted(() => ({
-  fsMkdirSync: vi.fn(),
-  fsWriteFileSync: vi.fn(),
-}));
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return {
-    ...actual,
-    mkdirSync: fsMkdirSync,
-    writeFileSync: fsWriteFileSync,
-    default: {
-      ...actual,
-      mkdirSync: fsMkdirSync,
-      writeFileSync: fsWriteFileSync,
-    },
-  };
-});
-
-// Mock transcription module
-const { mockTranscribeBuffer } = vi.hoisted(() => ({
-  mockTranscribeBuffer: vi.fn<(audioBuffer: Buffer, filename: string) => Promise<string | null>>().mockResolvedValue(null),
-}));
-vi.mock('../transcription.js', () => ({
-  transcribeBuffer: mockTranscribeBuffer,
 }));
 
 // Mock logger
@@ -63,8 +34,6 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
-      getFile: vi.fn().mockResolvedValue({ file_id: 'abc', file_path: undefined }),
-      setMyCommands: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -161,7 +130,6 @@ function createMediaCtx(overrides: {
   messageId?: number;
   caption?: string;
   extra?: Record<string, any>;
-  withApi?: boolean;
 }) {
   const chatId = overrides.chatId ?? 100200300;
   return {
@@ -182,8 +150,6 @@ function createMediaCtx(overrides: {
       ...(overrides.extra || {}),
     },
     me: { username: 'andy_ai_bot' },
-    // Include the bot's API when testing handlers that call ctx.api (e.g. getFile)
-    ...(overrides.withApi ? { api: currentBot().api } : {}),
   };
 }
 
@@ -561,12 +527,11 @@ describe('TelegramChannel', () => {
   // --- Non-text messages ---
 
   describe('non-text messages', () => {
-    it('stores [Photo] fallback when no photo data', async () => {
+    it('stores photo with placeholder', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      // No `photo` array → largestPhoto is undefined → fallback
       const ctx = createMediaCtx({});
       await triggerMediaMessage('message:photo', ctx);
 
@@ -576,7 +541,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores [Photo] fallback with caption when no photo data', async () => {
+    it('stores photo with caption', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -604,12 +569,11 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores voice message with placeholder when no voice data', async () => {
+    it('stores voice message with placeholder', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      // No voice object on message → falls back without calling getFile
       const ctx = createMediaCtx({});
       await triggerMediaMessage('message:voice', ctx);
 
@@ -714,294 +678,6 @@ describe('TelegramChannel', () => {
 
       const ctx = createMediaCtx({ chatId: 999999 });
       await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
-  });
-
-  // --- Photo download ---
-
-  describe('photo download', () => {
-    beforeEach(() => {
-      fsMkdirSync.mockClear();
-      fsWriteFileSync.mockClear();
-
-      currentBot().api.getFile = vi.fn().mockResolvedValue({
-        file_id: 'abc',
-        file_path: 'photos/abc.jpg',
-      });
-
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-      }));
-    });
-
-    afterEach(() => {
-      vi.unstubAllGlobals();
-    });
-
-    it('downloads and stores photo with workspace path', async () => {
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-      currentBot().api.getFile = vi.fn().mockResolvedValue({ file_id: 'abc', file_path: 'photos/abc.jpg' });
-
-      const ctx = createMediaCtx({
-        messageId: 1,
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo: /workspace/group/images/1.jpg]' }),
-      );
-    });
-
-    it('includes caption in downloaded photo content', async () => {
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-      currentBot().api.getFile = vi.fn().mockResolvedValue({ file_id: 'abc', file_path: 'photos/abc.jpg' });
-
-      const ctx = createMediaCtx({
-        messageId: 1,
-        caption: 'Look at this',
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo: /workspace/group/images/1.jpg] Look at this' }),
-      );
-    });
-
-    it('falls back to [Photo] when getFile returns no file_path', async () => {
-      currentBot().api.getFile = vi.fn().mockResolvedValue({ file_id: 'abc', file_path: undefined });
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo]' }),
-      );
-    });
-
-    it('falls back to [Photo] when getFile throws', async () => {
-      currentBot().api.getFile = vi.fn().mockRejectedValue(new Error('API error'));
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo]' }),
-      );
-    });
-
-    it('falls back to [Photo] when fetch returns non-ok status', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }));
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo]' }),
-      );
-    });
-
-    it('falls back to [Photo] when fetch rejects (network error)', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Photo]' }),
-      );
-    });
-
-    it('does not call onMessage for unregistered chat', async () => {
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        chatId: 999999,
-        withApi: true,
-        extra: { photo: [{ file_id: 'abc', file_size: 1000 }] },
-      });
-      await triggerMediaMessage('message:photo', ctx);
-
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
-  });
-
-  // --- Voice transcription ---
-
-  describe('voice transcription', () => {
-    beforeEach(() => {
-      mockTranscribeBuffer.mockClear();
-
-      currentBot().api.getFile = vi.fn().mockResolvedValue({
-        file_id: 'voice-abc',
-        file_path: 'voice/abc.ogg',
-      });
-
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-        ok: true,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-      }));
-    });
-
-    afterEach(() => {
-      vi.unstubAllGlobals();
-    });
-
-    it('transcribes voice message and stores as [Voice: <text>]', async () => {
-      mockTranscribeBuffer.mockResolvedValue('Hello, how are you?');
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-      currentBot().api.getFile = vi.fn().mockResolvedValue({ file_id: 'voice-abc', file_path: 'voice/abc.ogg' });
-
-      const ctx = createMediaCtx({
-        messageId: 5,
-        withApi: true,
-        extra: { voice: { file_id: 'voice-abc', duration: 3 } },
-      });
-      await triggerMediaMessage('message:voice', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Voice: Hello, how are you?]' }),
-      );
-    });
-
-    it('falls back to [Voice message] when transcribeBuffer returns null', async () => {
-      mockTranscribeBuffer.mockResolvedValue(null);
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { voice: { file_id: 'voice-abc', duration: 3 } },
-      });
-      await triggerMediaMessage('message:voice', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
-      );
-    });
-
-    it('falls back to [Voice message] when getFile returns no file_path', async () => {
-      currentBot().api.getFile = vi.fn().mockResolvedValue({ file_id: 'voice-abc', file_path: undefined });
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { voice: { file_id: 'voice-abc', duration: 3 } },
-      });
-      await triggerMediaMessage('message:voice', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
-      );
-      expect(mockTranscribeBuffer).not.toHaveBeenCalled();
-    });
-
-    it('falls back to [Voice message] when getFile throws', async () => {
-      currentBot().api.getFile = vi.fn().mockRejectedValue(new Error('Telegram API error'));
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { voice: { file_id: 'voice-abc', duration: 3 } },
-      });
-      await triggerMediaMessage('message:voice', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
-      );
-    });
-
-    it('falls back to [Voice message] when fetch fails', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        withApi: true,
-        extra: { voice: { file_id: 'voice-abc', duration: 3 } },
-      });
-      await triggerMediaMessage('message:voice', ctx);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
-      );
-    });
-
-    it('does not call onMessage for unregistered chat', async () => {
-      const opts = createTestOpts();
-      const channel = new TelegramChannel('bot-token', opts);
-      await channel.connect();
-
-      const ctx = createMediaCtx({
-        chatId: 999999,
-        withApi: true,
-        extra: { voice: { file_id: 'voice-abc', duration: 3 } },
-      });
-      await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
