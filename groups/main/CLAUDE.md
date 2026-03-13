@@ -45,7 +45,7 @@ When you learn something important:
 
 ## Stickers
 
-@stickers.md
+@STICKERS.md
 
 ## Soul
 
