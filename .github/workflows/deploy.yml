@@ -18,7 +18,8 @@ jobs:
           host_key: ${{ secrets.VPS_HOST_KEY }}
           script: |
             cd /home/mika/mika-nanoclaw
+            git stash
             git pull
             npm install
             npm run build
-            sudo systemctl restart nanoclaw
+            XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart nanoclaw
