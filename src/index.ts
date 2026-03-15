@@ -8,7 +8,6 @@ import {
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
-  TELEGRAM_BOT_POOL,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ONLY,
   TIMEZONE,
@@ -16,7 +15,7 @@ import {
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
-import { TelegramChannel, initBotPool } from './channels/telegram.js';
+import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -581,9 +580,6 @@ async function main(): Promise<void> {
     const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
     channels.push(telegram);
     await telegram.connect();
-    if (TELEGRAM_BOT_POOL.length > 0) {
-      await initBotPool(TELEGRAM_BOT_POOL);
-    }
   }
 
   if (channels.length === 0) {
