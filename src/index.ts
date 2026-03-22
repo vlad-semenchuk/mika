@@ -15,7 +15,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
-import { startMetricsServer, stopMetricsServer } from './metrics.js';
+import { startMetricsServer, stopMetricsServer, agentInvocationTotal, agentDurationSeconds } from './metrics.js';
 import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
@@ -227,6 +227,9 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
+  agentInvocationTotal.inc();
+  const agentStart = Date.now();
+
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
 
@@ -285,6 +288,8 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
+    agentDurationSeconds.observe((Date.now() - agentStart) / 1000);
+
     if (output.status === 'error') {
       logger.error(
         { group: group.name, error: output.error },
@@ -295,6 +300,7 @@ async function runAgent(
 
     return 'success';
   } catch (err) {
+    agentDurationSeconds.observe((Date.now() - agentStart) / 1000);
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
   }
