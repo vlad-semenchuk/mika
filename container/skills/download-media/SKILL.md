@@ -29,8 +29,14 @@ transcribe-media "$path"
 - A user shares a video link and asks what it says (download then transcribe)
 - A user wants to save a video from any supported site
 
+## Cookies (for Instagram, age-restricted content, etc.)
+
+If `/workspace/group/cookies.txt` exists, it is automatically passed to yt-dlp. This is needed for sites that block anonymous downloads (Instagram, age-restricted YouTube, etc.).
+
+To set up: export cookies from a browser in Netscape format and place at `groups/{name}/cookies.txt`.
+
 ## Limitations
 
-- No authentication — private or age-restricted content may fail
+- Without cookies, some sites (Instagram, age-restricted content) may block downloads
 - Output is always mp4 format
 - Very long videos may use significant disk space

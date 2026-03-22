@@ -12,7 +12,14 @@ if [ -z "$URL" ]; then
 fi
 
 OUTPUT_DIR="/workspace/group/media"
+COOKIES_FILE="/workspace/group/cookies.txt"
 mkdir -p "$OUTPUT_DIR"
+
+# Use cookies if available (needed for Instagram, age-restricted content, etc.)
+COOKIES_ARGS=()
+if [ -f "$COOKIES_FILE" ]; then
+  COOKIES_ARGS=(--cookies "$COOKIES_FILE")
+fi
 
 # Download with mp4 preference, single video only, clean stderr
 filepath=$(yt-dlp \
@@ -22,6 +29,7 @@ filepath=$(yt-dlp \
   --no-warnings \
   --print after_move:filepath \
   -o "${OUTPUT_DIR}/%(id)s.%(ext)s" \
+  "${COOKIES_ARGS[@]}" \
   "$URL" | tail -1)
 
 if [ -z "$filepath" ] || [ ! -f "$filepath" ]; then
