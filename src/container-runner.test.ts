@@ -6,6 +6,14 @@ import { PassThrough } from 'stream';
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
+// Mock metrics module
+vi.mock('./metrics.js', () => ({
+  containerSpawnTotal: { inc: vi.fn() },
+  containerFailureTotal: { inc: vi.fn() },
+  containerDurationSeconds: { observe: vi.fn() },
+  containersActive: { inc: vi.fn(), dec: vi.fn() },
+}));
+
 // Mock config
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
@@ -297,5 +305,96 @@ describe('container env forwarding', () => {
     const spawnArgs = calls[calls.length - 1][1] as string[];
     expect(spawnArgs.join(' ')).not.toContain('GROQ_API_KEY');
     expect(spawnArgs.join(' ')).not.toContain('OPENAI_API_KEY');
+  });
+});
+
+describe('container metrics instrumentation', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    mockReadEnvFile.mockReset();
+    mockReadEnvFile.mockReturnValue({});
+
+    // Reset metric mocks before each test
+    const metrics = await import('./metrics.js');
+    vi.mocked(metrics.containerSpawnTotal.inc).mockReset();
+    vi.mocked(metrics.containerFailureTotal.inc).mockReset();
+    vi.mocked(metrics.containerDurationSeconds.observe).mockReset();
+    vi.mocked(metrics.containersActive.inc).mockReset();
+    vi.mocked(metrics.containersActive.dec).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('normal exit (code 0): spawn/active/duration metrics are called', async () => {
+    const metrics = await import('./metrics.js');
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+
+    await vi.advanceTimersByTimeAsync(10);
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done', newSessionId: 'sess-1' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(metrics.containerSpawnTotal.inc).toHaveBeenCalledWith({ group: 'Test Group' });
+    expect(metrics.containersActive.inc).toHaveBeenCalled();
+    expect(metrics.containersActive.dec).toHaveBeenCalled();
+    expect(metrics.containerDurationSeconds.observe).toHaveBeenCalledWith(
+      { group: 'Test Group' },
+      expect.any(Number),
+    );
+  });
+
+  it('non-zero exit code: containerFailureTotal is called with exit_error reason', async () => {
+    const metrics = await import('./metrics.js');
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 1);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(metrics.containerFailureTotal.inc).toHaveBeenCalledWith({
+      group: 'Test Group',
+      reason: 'exit_error',
+    });
+    // Active gauge must still be decremented
+    expect(metrics.containersActive.dec).toHaveBeenCalled();
+  });
+
+  it('timeout with no output: containerFailureTotal is called with timeout reason', async () => {
+    const metrics = await import('./metrics.js');
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {}, onOutput);
+
+    // No output — fire the hard timeout
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(metrics.containerFailureTotal.inc).toHaveBeenCalledWith({
+      group: 'Test Group',
+      reason: 'timeout',
+    });
+    expect(metrics.containersActive.dec).toHaveBeenCalled();
+  });
+
+  it('spawn error: containerFailureTotal is called with spawn_error reason', async () => {
+    const metrics = await import('./metrics.js');
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+
+    fakeProc.emit('error', new Error('spawn failed'));
+    fakeProc.emit('close', null);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(metrics.containerFailureTotal.inc).toHaveBeenCalledWith({
+      group: 'Test Group',
+      reason: 'spawn_error',
+    });
   });
 });

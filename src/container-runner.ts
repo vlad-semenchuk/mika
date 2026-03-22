@@ -30,6 +30,12 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
+import {
+  containerSpawnTotal,
+  containerFailureTotal,
+  containerDurationSeconds,
+  containersActive,
+} from './metrics.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -319,6 +325,9 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
+    containerSpawnTotal.inc({ group: group.name });
+    containersActive.inc();
+
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -448,6 +457,10 @@ export async function runContainerAgent(
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
 
+      // Always record duration and decrement active gauge on every close path
+      containerDurationSeconds.observe({ group: group.name }, duration / 1000);
+      containersActive.dec();
+
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const timeoutLog = path.join(logsDir, `container-${ts}.log`);
@@ -486,6 +499,8 @@ export async function runContainerAgent(
           { group: group.name, containerName, duration, code },
           'Container timed out with no output',
         );
+
+        containerFailureTotal.inc({ group: group.name, reason: 'timeout' });
 
         resolve({
           status: 'error',
@@ -576,6 +591,8 @@ export async function runContainerAgent(
           'Container exited with error',
         );
 
+        containerFailureTotal.inc({ group: group.name, reason: 'exit_error' });
+
         resolve({
           status: 'error',
           result: null,
@@ -655,6 +672,9 @@ export async function runContainerAgent(
         { group: group.name, containerName, error: err },
         'Container spawn error',
       );
+      // Note: do NOT decrement containersActive here — close event always fires
+      // after error, so dec() in the close handler covers this path.
+      containerFailureTotal.inc({ group: group.name, reason: 'spawn_error' });
       resolve({
         status: 'error',
         result: null,
