@@ -85,3 +85,11 @@ export const TELEGRAM_BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_ONLY =
   (process.env.TELEGRAM_ONLY || envConfig.TELEGRAM_ONLY) === 'true';
+
+// Environment variables to forward to agent containers.
+// These are third-party API keys read from .env and passed directly
+// (not via credential proxy, which is Anthropic-only).
+export const CONTAINER_ENV_FORWARD: string[] = [
+  'GROQ_API_KEY',
+  'OPENAI_API_KEY',
+];
