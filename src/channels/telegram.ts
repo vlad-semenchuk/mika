@@ -5,7 +5,6 @@ import { Bot } from 'grammy';
 
 import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
-import { transcribeBuffer } from '../transcription.js';
 import {
   Channel,
   OnChatMetadata,
@@ -48,6 +47,100 @@ function getForwardedFrom(msg: any): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * Download a file from Telegram and save to the group's media directory.
+ * Returns the workspace path on success, null on failure.
+ * Normalizes .oga -> .ogg (Whisper API doesn't accept .oga).
+ */
+async function downloadTelegramMedia(
+  botToken: string,
+  api: any,
+  fileId: string,
+  groupFolder: string,
+  msgId: string,
+  defaultExt: string,
+  filenameOverride?: string,
+): Promise<string | null> {
+  try {
+    const file = await api.getFile(fileId);
+    if (!file.file_path) return null;
+
+    const mediaDir = path.join(GROUPS_DIR, groupFolder, 'media');
+    fs.mkdirSync(mediaDir, { recursive: true });
+
+    let ext = path.extname(file.file_path) || defaultExt;
+    if (ext === '.oga') ext = '.ogg';
+
+    const filename = filenameOverride
+      ? `${msgId}_${filenameOverride.replace(/[/\\:*?"<>|]/g, '_')}`
+      : `${msgId}${ext}`;
+    const localPath = path.join(mediaDir, filename);
+
+    const url = `https://api.telegram.org/file/bot${botToken}/${file.file_path}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    fs.writeFileSync(localPath, Buffer.from(await response.arrayBuffer()));
+
+    return `/workspace/group/media/${filename}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Media type config for download-based handlers */
+interface MediaTypeConfig {
+  label: string;
+  fallback: string;
+  getFileId: (msg: any) => string | undefined;
+  defaultExt: string;
+  getFilenameOverride?: (msg: any) => string | undefined;
+  supportsCaption?: boolean;
+}
+
+const MEDIA_TYPES: Record<string, MediaTypeConfig> = {
+  'message:photo': {
+    label: 'Photo',
+    fallback: '[Photo]',
+    getFileId: (msg) => msg.photo?.[msg.photo.length - 1]?.file_id,
+    defaultExt: '.jpg',
+    supportsCaption: true,
+  },
+  'message:voice': {
+    label: 'Voice',
+    fallback: '[Voice message]',
+    getFileId: (msg) => msg.voice?.file_id,
+    defaultExt: '.ogg',
+  },
+  'message:video': {
+    label: 'Video',
+    fallback: '[Video]',
+    getFileId: (msg) => msg.video?.file_id,
+    defaultExt: '.mp4',
+    supportsCaption: true,
+  },
+  'message:video_note': {
+    label: 'Video note',
+    fallback: '[Video note]',
+    getFileId: (msg) => msg.video_note?.file_id,
+    defaultExt: '.mp4',
+  },
+  'message:audio': {
+    label: 'Audio',
+    fallback: '[Audio]',
+    getFileId: (msg) => msg.audio?.file_id,
+    defaultExt: '.mp3',
+    supportsCaption: true,
+  },
+  'message:document': {
+    label: 'Document',
+    fallback: '[Document]',
+    getFileId: (msg) => msg.document?.file_id,
+    defaultExt: '.bin',
+    getFilenameOverride: (msg) => msg.document?.file_name || undefined,
+    supportsCaption: true,
+  },
+};
 
 export class TelegramChannel implements Channel {
   name = 'telegram';
@@ -192,135 +285,60 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    this.bot.on('message:photo', async (ctx) => {
-      const chatJid = `tg:${ctx.chat.id}`;
-      const group = this.opts.registeredGroups()[chatJid];
-      if (!group) return;
+    // Register download-based media handlers
+    for (const [filter, config] of Object.entries(MEDIA_TYPES)) {
+      this.bot.on(filter, async (ctx: any) => {
+        const chatJid = `tg:${ctx.chat.id}`;
+        const group = this.opts.registeredGroups()[chatJid];
+        if (!group) return;
 
-      const timestamp = new Date(ctx.message.date * 1000).toISOString();
-      const senderName =
-        ctx.from?.first_name ||
-        ctx.from?.username ||
-        ctx.from?.id?.toString() ||
-        'Unknown';
-      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
-      const msgId = ctx.message.message_id.toString();
+        const timestamp = new Date(ctx.message.date * 1000).toISOString();
+        const senderName =
+          ctx.from?.first_name ||
+          ctx.from?.username ||
+          ctx.from?.id?.toString() ||
+          'Unknown';
+        const caption = config.supportsCaption && ctx.message.caption
+          ? ` ${ctx.message.caption}`
+          : '';
+        const msgId = ctx.message.message_id.toString();
+        const fwd = getForwardedFrom(ctx.message);
+        const fwdPrefix = fwd ? `[Forwarded from ${fwd}] ` : '';
 
-      const fwd = getForwardedFrom(ctx.message);
-      const fwdPrefix = fwd ? `[Forwarded from ${fwd}] ` : '';
+        const fileId = config.getFileId(ctx.message);
+        let content: string;
 
-      const photos = ctx.message.photo;
-      const largestPhoto = photos?.[photos.length - 1];
-      let content: string;
-
-      if (largestPhoto) {
-        try {
-          const file = await ctx.api.getFile(largestPhoto.file_id);
-          if (file.file_path) {
-            const imagesDir = path.join(GROUPS_DIR, group.folder, 'images');
-            fs.mkdirSync(imagesDir, { recursive: true });
-            const ext = path.extname(file.file_path) || '.jpg';
-            const filename = `${msgId}${ext}`;
-            const localPath = path.join(imagesDir, filename);
-
-            const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            fs.writeFileSync(localPath, Buffer.from(await response.arrayBuffer()));
-
-            content = `${fwdPrefix}[Photo: /workspace/group/images/${filename}]${caption}`;
-          } else {
-            content = `${fwdPrefix}[Photo]${caption}`;
-          }
-        } catch (err) {
-          logger.error({ err, chatJid }, 'Failed to download Telegram photo');
-          content = `${fwdPrefix}[Photo]${caption}`;
+        if (fileId) {
+          const filenameOverride = config.getFilenameOverride?.(ctx.message);
+          const workspacePath = await downloadTelegramMedia(
+            this.botToken, ctx.api, fileId,
+            group.folder, msgId, config.defaultExt, filenameOverride,
+          );
+          content = workspacePath
+            ? `${fwdPrefix}[${config.label}: ${workspacePath}]${caption}`
+            : `${fwdPrefix}${config.fallback}${caption}`;
+        } else {
+          content = `${fwdPrefix}${config.fallback}${caption}`;
         }
-      } else {
-        content = `${fwdPrefix}[Photo]${caption}`;
-      }
 
-      this.opts.onChatMetadata(chatJid, timestamp);
-      this.opts.onMessage(chatJid, {
-        id: msgId,
-        chat_jid: chatJid,
-        sender: ctx.from?.id?.toString() || '',
-        sender_name: senderName,
-        content,
-        timestamp,
-        is_from_me: false,
+        this.opts.onChatMetadata(chatJid, timestamp);
+        this.opts.onMessage(chatJid, {
+          id: msgId,
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content,
+          timestamp,
+          is_from_me: false,
+        });
+
+        logger.info(
+          { chatJid, mediaType: config.label, downloaded: content.includes('/workspace/') },
+          'Telegram media stored',
+        );
       });
+    }
 
-      logger.info(
-        { chatJid, downloaded: content.includes('/workspace/') },
-        'Telegram photo stored',
-      );
-    });
-
-    this.bot.on('message:voice', async (ctx) => {
-      const chatJid = `tg:${ctx.chat.id}`;
-      const group = this.opts.registeredGroups()[chatJid];
-      if (!group) return;
-
-      const timestamp = new Date(ctx.message.date * 1000).toISOString();
-      const senderName =
-        ctx.from?.first_name ||
-        ctx.from?.username ||
-        ctx.from?.id?.toString() ||
-        'Unknown';
-      const msgId = ctx.message.message_id.toString();
-      const fwd = getForwardedFrom(ctx.message);
-      const fwdPrefix = fwd ? `[Forwarded from ${fwd}] ` : '';
-      const voice = ctx.message.voice;
-      let content: string;
-
-      if (voice) {
-        try {
-          const file = await ctx.api.getFile(voice.file_id);
-          if (file.file_path) {
-            const url = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
-            const response = await fetch(url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const buffer = Buffer.from(await response.arrayBuffer());
-            const rawExt = path.extname(file.file_path) || '.ogg';
-            // Normalize .oga → .ogg; Groq/OpenAI API doesn't accept .oga
-            const ext = rawExt === '.oga' ? '.ogg' : rawExt;
-            const transcript = await transcribeBuffer(buffer, `voice${ext}`);
-            content = transcript ? `${fwdPrefix}[Voice: ${transcript}]` : `${fwdPrefix}[Voice message]`;
-          } else {
-            content = `${fwdPrefix}[Voice message]`;
-          }
-        } catch (err) {
-          logger.error({ err, chatJid }, 'Failed to transcribe Telegram voice message');
-          content = `${fwdPrefix}[Voice message]`;
-        }
-      } else {
-        content = `${fwdPrefix}[Voice message]`;
-      }
-
-      this.opts.onChatMetadata(chatJid, timestamp);
-      this.opts.onMessage(chatJid, {
-        id: msgId,
-        chat_jid: chatJid,
-        sender: ctx.from?.id?.toString() || '',
-        sender_name: senderName,
-        content,
-        timestamp,
-        is_from_me: false,
-      });
-
-      logger.info(
-        { chatJid, transcribed: content.startsWith('[Voice:') },
-        'Telegram voice message stored',
-      );
-    });
-
-    this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
-    });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
       storeNonText(ctx, `[Sticker ${emoji}]`);
