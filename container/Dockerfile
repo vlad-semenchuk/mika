@@ -33,6 +33,12 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 
+# Install transcribe-media script
+COPY transcribe-media/ /opt/transcribe-media/
+RUN cd /opt/transcribe-media && npm install --omit=dev && \
+    ln -s /opt/transcribe-media/transcribe-media.mjs /usr/local/bin/transcribe-media && \
+    chmod +x /opt/transcribe-media/transcribe-media.mjs
+
 # Create app directory
 WORKDIR /app
 
