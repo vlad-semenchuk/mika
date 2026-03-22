@@ -40,9 +40,10 @@ RUN cd /opt/transcribe-media && npm install --omit=dev && \
     ln -s /opt/transcribe-media/transcribe-media.mjs /usr/local/bin/transcribe-media && \
     chmod +x /opt/transcribe-media/transcribe-media.mjs
 
-# Install yt-dlp standalone binary (no Python dependency)
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp && \
-    chmod +x /usr/local/bin/yt-dlp
+# Install yt-dlp via pip (works on both arm64 and x86_64)
+RUN apt-get update && apt-get install -y python3 python3-pip && \
+    pip3 install --break-system-packages yt-dlp && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install download-media script
 COPY download-media/ /opt/download-media/
