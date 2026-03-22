@@ -2,7 +2,17 @@ import { describe, it, expect, afterEach } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
 
-import { registry, startMetricsServer, stopMetricsServer } from './metrics.js';
+import {
+  registry,
+  startMetricsServer,
+  stopMetricsServer,
+  containerSpawnTotal,
+  containerFailureTotal,
+  containerDurationSeconds,
+  containersActive,
+  agentInvocationTotal,
+  agentDurationSeconds,
+} from './metrics.js';
 
 function getPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -95,5 +105,122 @@ describe('metrics module', () => {
     const expected = registry.contentType;
 
     expect(res.contentType).toContain(expected.split(';')[0].trim());
+  });
+});
+
+describe('subsystem metrics', () => {
+  afterEach(async () => {
+    await stopMetricsServer();
+  });
+
+  // CONT-01: Container spawn counter
+  it('containerSpawnTotal appears in /metrics output after increment', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    containerSpawnTotal.inc({ group: 'test-group' });
+
+    const res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_container_spawn_total');
+  });
+
+  // CONT-02: Container failure counter
+  it('containerFailureTotal appears in /metrics output', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    containerFailureTotal.inc({ group: 'test-group', reason: 'timeout' });
+
+    const res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_container_failure_total');
+  });
+
+  // CONT-03: Container duration histogram
+  it('containerDurationSeconds records observation in /metrics output', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    containerDurationSeconds.observe({ group: 'test-group' }, 30);
+
+    const res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_container_duration_seconds');
+  });
+
+  // CONT-04: Active containers gauge
+  it('containersActive gauge increments and decrements correctly', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    containersActive.inc();
+    let res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_containers_active');
+
+    // Verify gauge goes up with inc() and down with dec()
+    const metric1 = await registry.getSingleMetricAsString('nanoclaw_containers_active');
+    expect(metric1).toContain('nanoclaw_containers_active');
+
+    containersActive.dec();
+    const metric2 = await registry.getSingleMetricAsString('nanoclaw_containers_active');
+    expect(metric2).toContain('nanoclaw_containers_active');
+  });
+
+  // AGNT-01: Agent invocation counter
+  it('agentInvocationTotal appears in /metrics output after increment', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    agentInvocationTotal.inc();
+
+    const res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_agent_invocation_total');
+  });
+
+  // AGNT-02: Agent duration histogram
+  it('agentDurationSeconds records observation in /metrics output', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    agentDurationSeconds.observe(45);
+
+    const res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_agent_duration_seconds');
+  });
+
+  // All six metrics appear in a single /metrics response
+  it('all six subsystem metrics appear in /metrics output', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    const res = await fetchMetrics(port);
+    expect(res.body).toContain('nanoclaw_container_spawn_total');
+    expect(res.body).toContain('nanoclaw_container_failure_total');
+    expect(res.body).toContain('nanoclaw_container_duration_seconds');
+    expect(res.body).toContain('nanoclaw_containers_active');
+    expect(res.body).toContain('nanoclaw_agent_invocation_total');
+    expect(res.body).toContain('nanoclaw_agent_duration_seconds');
+  });
+});
+
+describe('agent metrics', () => {
+  afterEach(async () => {
+    await stopMetricsServer();
+  });
+
+  it('agentInvocationTotal counter can be incremented', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    agentInvocationTotal.inc();
+    const metric = await registry.getSingleMetricAsString('nanoclaw_agent_invocation_total');
+    expect(metric).toContain('nanoclaw_agent_invocation_total');
+  });
+
+  it('agentDurationSeconds histogram records observations', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+
+    agentDurationSeconds.observe(60);
+    const metric = await registry.getSingleMetricAsString('nanoclaw_agent_duration_seconds');
+    expect(metric).toContain('nanoclaw_agent_duration_seconds');
   });
 });
