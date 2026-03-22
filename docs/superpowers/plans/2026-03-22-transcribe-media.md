@@ -62,7 +62,7 @@ git commit -m "feat: add CONTAINER_ENV_FORWARD whitelist to config"
 
 ### Task 2: Forward whitelisted env vars to containers
 
-**Important:** The codebase keeps secrets out of `process.env` by design. API keys live in `.env` and are read via `readEnvFile()` from `src/env.ts`. The forwarding must use `readEnvFile`, not `process.env`.
+**Note:** The codebase uses a dual-source pattern for config: `process.env` first, `.env` file fallback (see `config.ts`). The forwarding follows the same pattern so keys work regardless of where they're set.
 
 **Files:**
 - Modify: `src/container-runner.ts:215-264` (`buildContainerArgs` function)
@@ -98,11 +98,8 @@ describe('container env forwarding', () => {
     vi.useRealTimers();
   });
 
-  it('forwards whitelisted env vars when set in .env', async () => {
-    mockReadEnvFile.mockReturnValueOnce({
-      GROQ_API_KEY: 'test-groq-key',
-      OPENAI_API_KEY: 'test-openai-key',
-    });
+  it('forwards env vars from process.env', async () => {
+    process.env.GROQ_API_KEY = 'test-groq-key';
 
     const resultPromise = runContainerAgent(
       testGroup,
@@ -118,10 +115,35 @@ describe('container env forwarding', () => {
     const { spawn } = await import('child_process');
     const spawnArgs = (spawn as any).mock.calls[0][1] as string[];
     expect(spawnArgs).toContain('GROQ_API_KEY=test-groq-key');
-    expect(spawnArgs).toContain('OPENAI_API_KEY=test-openai-key');
+
+    delete process.env.GROQ_API_KEY;
   });
 
-  it('skips whitelisted env vars when not set in .env', async () => {
+  it('falls back to .env file when process.env is not set', async () => {
+    delete process.env.GROQ_API_KEY;
+    mockReadEnvFile.mockReturnValueOnce({
+      GROQ_API_KEY: 'dotenv-groq-key',
+    });
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const { spawn } = await import('child_process');
+    const spawnArgs = (spawn as any).mock.calls[0][1] as string[];
+    expect(spawnArgs).toContain('GROQ_API_KEY=dotenv-groq-key');
+  });
+
+  it('skips env vars when not set anywhere', async () => {
+    delete process.env.GROQ_API_KEY;
+    delete process.env.OPENAI_API_KEY;
     mockReadEnvFile.mockReturnValueOnce({});
 
     const resultPromise = runContainerAgent(
@@ -171,12 +193,12 @@ In `buildContainerArgs`, add after the host gateway args line (`args.push(...hos
 
 ```ts
   // Forward whitelisted environment variables to the container.
-  // Keys are read from .env (not process.env) to match the codebase's
-  // secret isolation pattern — secrets never enter process.env.
-  const forwardEnv = readEnvFile(CONTAINER_ENV_FORWARD);
+  // Dual-source: process.env first, .env file fallback (same pattern as config.ts).
+  const envFallback = readEnvFile(CONTAINER_ENV_FORWARD);
   for (const name of CONTAINER_ENV_FORWARD) {
-    if (forwardEnv[name]) {
-      args.push('-e', `${name}=${forwardEnv[name]}`);
+    const value = process.env[name] || envFallback[name];
+    if (value) {
+      args.push('-e', `${name}=${value}`);
     }
   }
 ```
