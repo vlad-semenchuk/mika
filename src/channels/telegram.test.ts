@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
+  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
 }));
 
 // Mock logger
@@ -17,6 +18,31 @@ vi.mock('../logger.js', () => ({
     error: vi.fn(),
   },
 }));
+
+// Mock transcription (prevents real API calls during transition)
+vi.mock('../transcription.js', () => ({
+  transcribeBuffer: vi.fn().mockResolvedValue(null),
+}));
+
+// Mock fs
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn(),
+    },
+  };
+});
+
+// Mock fetch
+const fetchMock = vi.fn().mockResolvedValue({
+  ok: true,
+  arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+});
+vi.stubGlobal('fetch', fetchMock);
 
 // --- Grammy mock ---
 
@@ -34,6 +60,8 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      getFile: vi.fn().mockResolvedValue({ file_path: 'photos/file_0.jpg' }),
+      sendSticker: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -206,6 +234,7 @@ describe('TelegramChannel', () => {
       expect(currentBot().filterHandlers.has('message:video')).toBe(true);
       expect(currentBot().filterHandlers.has('message:voice')).toBe(true);
       expect(currentBot().filterHandlers.has('message:audio')).toBe(true);
+      expect(currentBot().filterHandlers.has('message:video_note')).toBe(true);
       expect(currentBot().filterHandlers.has('message:document')).toBe(true);
       expect(currentBot().filterHandlers.has('message:sticker')).toBe(true);
       expect(currentBot().filterHandlers.has('message:location')).toBe(true);
@@ -524,15 +553,37 @@ describe('TelegramChannel', () => {
     });
   });
 
-  // --- Non-text messages ---
+  // --- Media download ---
 
-  describe('non-text messages', () => {
-    it('stores photo with placeholder', async () => {
+  describe('media download', () => {
+    it('downloads photo and stores path', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'photo-123', width: 800, height: 600 }] },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Photo: /workspace/group/media/1.jpg]',
+        }),
+      );
+    });
+
+    it('falls back to placeholder when photo download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockRejectedValueOnce(new Error('API error'));
+
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'photo-123', width: 800, height: 600 }] },
+      });
       await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -541,40 +592,76 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores photo with caption', async () => {
+    it('includes caption with downloaded media', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({ caption: 'Look at this' });
+      const ctx = createMediaCtx({
+        caption: 'Look at this',
+        extra: { photo: [{ file_id: 'photo-123', width: 800, height: 600 }] },
+      });
       await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Photo] Look at this' }),
+        expect.objectContaining({
+          content: '[Photo: /workspace/group/media/1.jpg] Look at this',
+        }),
       );
     });
 
-    it('stores video with placeholder', async () => {
+    it('includes forwarded prefix with downloaded media', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
-      await triggerMediaMessage('message:video', ctx);
+      const ctx = createMediaCtx({
+        extra: {
+          photo: [{ file_id: 'photo-123', width: 800, height: 600 }],
+          forward_origin: { type: 'user', sender_user: { first_name: 'Bob' } },
+        },
+      });
+      await triggerMediaMessage('message:photo', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Video]' }),
+        expect.objectContaining({
+          content: '[Forwarded from Bob] [Photo: /workspace/group/media/1.jpg]',
+        }),
       );
     });
 
-    it('stores voice message with placeholder', async () => {
+    it('downloads voice message and stores path (normalizes .oga to .ogg)', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      currentBot().api.getFile.mockResolvedValueOnce({ file_path: 'voice/file_0.oga' });
+
+      const ctx = createMediaCtx({
+        extra: { voice: { file_id: 'voice-123' } },
+      });
+      await triggerMediaMessage('message:voice', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Voice: /workspace/group/media/1.ogg]',
+        }),
+      );
+    });
+
+    it('falls back to placeholder when voice download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockRejectedValueOnce(new Error('API error'));
+
+      const ctx = createMediaCtx({
+        extra: { voice: { file_id: 'voice-123' } },
+      });
       await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -583,12 +670,112 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores audio with placeholder', async () => {
+    it('downloads video and stores path', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({});
+      currentBot().api.getFile.mockResolvedValueOnce({ file_path: 'videos/file_0.mp4' });
+
+      const ctx = createMediaCtx({
+        extra: { video: { file_id: 'video-123' } },
+      });
+      await triggerMediaMessage('message:video', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Video: /workspace/group/media/1.mp4]',
+        }),
+      );
+    });
+
+    it('falls back to placeholder when video download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockRejectedValueOnce(new Error('API error'));
+
+      const ctx = createMediaCtx({
+        extra: { video: { file_id: 'video-123' } },
+      });
+      await triggerMediaMessage('message:video', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Video]' }),
+      );
+    });
+
+    it('downloads video note and stores path', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockResolvedValueOnce({ file_path: 'video_notes/file_0.mp4' });
+
+      const ctx = createMediaCtx({
+        extra: { video_note: { file_id: 'vnote-123' } },
+      });
+      await triggerMediaMessage('message:video_note', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Video note: /workspace/group/media/1.mp4]',
+        }),
+      );
+    });
+
+    it('falls back to placeholder when video note download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockRejectedValueOnce(new Error('API error'));
+
+      const ctx = createMediaCtx({
+        extra: { video_note: { file_id: 'vnote-123' } },
+      });
+      await triggerMediaMessage('message:video_note', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Video note]' }),
+      );
+    });
+
+    it('downloads audio and stores path', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockResolvedValueOnce({ file_path: 'audio/file_0.mp3' });
+
+      const ctx = createMediaCtx({
+        extra: { audio: { file_id: 'audio-123' } },
+      });
+      await triggerMediaMessage('message:audio', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Audio: /workspace/group/media/1.mp3]',
+        }),
+      );
+    });
+
+    it('falls back to placeholder when audio download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockRejectedValueOnce(new Error('API error'));
+
+      const ctx = createMediaCtx({
+        extra: { audio: { file_id: 'audio-123' } },
+      });
       await triggerMediaMessage('message:audio', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
@@ -597,37 +784,65 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores document with filename', async () => {
+    it('downloads document and stores path with original filename', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
+      currentBot().api.getFile.mockResolvedValueOnce({ file_path: 'documents/file_0.pdf' });
+
       const ctx = createMediaCtx({
-        extra: { document: { file_name: 'report.pdf' } },
+        extra: { document: { file_id: 'doc-123', file_name: 'report.pdf' } },
       });
       await triggerMediaMessage('message:document', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Document: report.pdf]' }),
+        expect.objectContaining({
+          content: '[Document: /workspace/group/media/1_report.pdf]',
+        }),
       );
     });
 
-    it('stores document with fallback name when filename missing', async () => {
+    it('sanitizes document filename with special characters', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      const ctx = createMediaCtx({ extra: { document: {} } });
+      currentBot().api.getFile.mockResolvedValueOnce({ file_path: 'documents/file_0.pdf' });
+
+      const ctx = createMediaCtx({
+        extra: { document: { file_id: 'doc-123', file_name: 'my/bad:file*.pdf' } },
+      });
       await triggerMediaMessage('message:document', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Document: file]' }),
+        expect.objectContaining({
+          content: '[Document: /workspace/group/media/1_my_bad_file_.pdf]',
+        }),
       );
     });
 
-    it('stores sticker with emoji', async () => {
+    it('falls back to placeholder when document download fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockRejectedValueOnce(new Error('API error'));
+
+      const ctx = createMediaCtx({
+        extra: { document: { file_id: 'doc-123', file_name: 'report.pdf' } },
+      });
+      await triggerMediaMessage('message:document', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Document]' }),
+      );
+    });
+
+    it('stores sticker with emoji (unchanged)', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -643,7 +858,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores location with placeholder', async () => {
+    it('stores location with placeholder (unchanged)', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -657,7 +872,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores contact with placeholder', async () => {
+    it('stores contact with placeholder (unchanged)', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -671,7 +886,7 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('ignores non-text messages from unregistered chats', async () => {
+    it('ignores media from unregistered chats', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
