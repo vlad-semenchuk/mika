@@ -44,6 +44,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 // Mock fs
+const { mockRmSync } = vi.hoisted(() => ({ mockRmSync: vi.fn() }));
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   return {
@@ -57,6 +58,7 @@ vi.mock('fs', async () => {
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
       copyFileSync: vi.fn(),
+      rmSync: mockRmSync,
     },
   };
 });
@@ -396,5 +398,51 @@ describe('container metrics instrumentation', () => {
       group: 'Test Group',
       reason: 'spawn_error',
     });
+  });
+});
+
+describe('media directory cleanup', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+    mockRmSync.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('cleans up media directory on container close', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'done' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const expectedMediaDir = expect.stringMatching(/test-group[\\/]media$/);
+    expect(mockRmSync).toHaveBeenCalledWith(expectedMediaDir, { recursive: true, force: true });
+  });
+
+  it('cleans up media directory on container spawn error', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    fakeProc.emit('error', new Error('spawn failed'));
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const expectedMediaDir = expect.stringMatching(/test-group[\\/]media$/);
+    expect(mockRmSync).toHaveBeenCalledWith(expectedMediaDir, { recursive: true, force: true });
   });
 });

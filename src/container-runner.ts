@@ -282,6 +282,11 @@ function buildContainerArgs(
   return args;
 }
 
+function cleanupMediaDir(mediaDir: string): void {
+  fs.rmSync(mediaDir, { recursive: true, force: true });
+  fs.mkdirSync(mediaDir, { recursive: true });
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
@@ -325,6 +330,8 @@ export async function runContainerAgent(
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
+
+  const mediaDir = path.join(groupDir, 'media');
 
   return new Promise((resolve) => {
     containerSpawnTotal.inc({ group: group.name });
@@ -457,6 +464,7 @@ export async function runContainerAgent(
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+      cleanupMediaDir(mediaDir);
       const duration = Date.now() - startTime;
 
       // Always record duration and decrement active gauge on every close path
@@ -676,6 +684,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      cleanupMediaDir(mediaDir);
       logger.error(
         { groupId: group.folder, groupName: group.name, containerName, err },
         'Container spawn error',
