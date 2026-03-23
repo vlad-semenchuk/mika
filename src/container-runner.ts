@@ -276,6 +276,11 @@ function buildContainerArgs(
   return args;
 }
 
+function cleanupMediaDir(mediaDir: string): void {
+  fs.rmSync(mediaDir, { recursive: true, force: true });
+  fs.mkdirSync(mediaDir, { recursive: true });
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
@@ -317,6 +322,8 @@ export async function runContainerAgent(
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
+
+  const mediaDir = path.join(groupDir, 'media');
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
@@ -446,6 +453,7 @@ export async function runContainerAgent(
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+      cleanupMediaDir(mediaDir);
       const duration = Date.now() - startTime;
 
       if (timedOut) {
@@ -651,6 +659,7 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      cleanupMediaDir(mediaDir);
       logger.error(
         { group: group.name, containerName, error: err },
         'Container spawn error',
