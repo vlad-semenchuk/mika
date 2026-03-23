@@ -215,7 +215,7 @@ async function runTask(
   } catch (err) {
     if (closeTimer) clearTimeout(closeTimer);
     error = err instanceof Error ? err.message : String(err);
-    logger.error({ taskId: task.id, error }, 'Task failed');
+    logger.error({ err, groupFolder: group.folder }, 'Container task threw unexpectedly');
   }
 
   const durationMs = Date.now() - startTime;

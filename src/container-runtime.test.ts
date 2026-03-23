@@ -7,6 +7,7 @@ vi.mock('./logger.js', () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    fatal: vi.fn(),
   },
 }));
 
@@ -72,7 +73,7 @@ describe('ensureContainerRuntimeRunning', () => {
     expect(() => ensureContainerRuntimeRunning()).toThrow(
       'Container runtime is required but failed to start',
     );
-    expect(logger.error).toHaveBeenCalled();
+    expect(logger.fatal).toHaveBeenCalled();
   });
 });
 

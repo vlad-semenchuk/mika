@@ -300,7 +300,8 @@ export async function runContainerAgent(
 
   logger.debug(
     {
-      group: group.name,
+      groupId: group.folder,
+      groupName: group.name,
       containerName,
       mounts: mounts.map(
         (m) =>
@@ -313,7 +314,8 @@ export async function runContainerAgent(
 
   logger.info(
     {
-      group: group.name,
+      groupId: group.folder,
+      groupName: group.name,
       containerName,
       mountCount: mounts.length,
       isMain: input.isMain,
@@ -357,7 +359,7 @@ export async function runContainerAgent(
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
-            { group: group.name, size: stdout.length },
+            { groupId: group.folder, groupName: group.name, size: stdout.length },
             'Container stdout truncated due to size limit',
           );
         } else {
@@ -391,7 +393,7 @@ export async function runContainerAgent(
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
+              { groupId: group.folder, groupName: group.name, error: err },
               'Failed to parse streamed output chunk',
             );
           }
@@ -403,7 +405,7 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ groupId: group.folder, containerName }, line);
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).
@@ -413,7 +415,7 @@ export async function runContainerAgent(
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
         logger.warn(
-          { group: group.name, size: stderr.length },
+          { groupId: group.folder, groupName: group.name, size: stderr.length },
           'Container stderr truncated due to size limit',
         );
       } else {
@@ -431,13 +433,13 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error(
-        { group: group.name, containerName },
+        { groupId: group.folder, groupName: group.name, containerName },
         'Container timeout, stopping gracefully',
       );
       exec(stopContainer(containerName), { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn(
-            { group: group.name, containerName, err },
+            { groupId: group.folder, groupName: group.name, containerName, err },
             'Graceful stop failed, force killing',
           );
           container.kill('SIGKILL');
@@ -482,7 +484,7 @@ export async function runContainerAgent(
         // container being reaped after the idle period expired.
         if (hadStreamingOutput) {
           logger.info(
-            { group: group.name, containerName, duration, code },
+            { groupId: group.folder, groupName: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
@@ -496,7 +498,7 @@ export async function runContainerAgent(
         }
 
         logger.error(
-          { group: group.name, containerName, duration, code },
+          { groupId: group.folder, groupName: group.name, containerName, duration, code },
           'Container timed out with no output',
         );
 
@@ -581,7 +583,9 @@ export async function runContainerAgent(
       if (code !== 0) {
         logger.error(
           {
-            group: group.name,
+            groupId: group.folder,
+            groupName: group.name,
+            containerName,
             code,
             duration,
             stderr,
@@ -605,7 +609,7 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { groupId: group.folder, groupName: group.name, containerName, duration, newSessionId },
             'Container completed (streaming mode)',
           );
           resolve({
@@ -638,7 +642,9 @@ export async function runContainerAgent(
 
         logger.info(
           {
-            group: group.name,
+            groupId: group.folder,
+            groupName: group.name,
+            containerName,
             duration,
             status: output.status,
             hasResult: !!output.result,
@@ -650,7 +656,9 @@ export async function runContainerAgent(
       } catch (err) {
         logger.error(
           {
-            group: group.name,
+            groupId: group.folder,
+            groupName: group.name,
+            containerName,
             stdout,
             stderr,
             error: err,
@@ -669,7 +677,7 @@ export async function runContainerAgent(
     container.on('error', (err) => {
       clearTimeout(timeout);
       logger.error(
-        { group: group.name, containerName, error: err },
+        { groupId: group.folder, groupName: group.name, containerName, err },
         'Container spawn error',
       );
       // Note: do NOT decrement containersActive here — close event always fires

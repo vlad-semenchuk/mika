@@ -188,8 +188,8 @@ export class GroupQueue {
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       fs.writeFileSync(path.join(inputDir, '_close'), '');
-    } catch {
-      // ignore
+    } catch (err) {
+      logger.warn({ groupJid, err }, 'Failed to write close sentinel to IPC');
     }
   }
 
