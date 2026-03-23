@@ -127,9 +127,7 @@ describe('LOGG-01: environment-conditional transport logic', () => {
     const isDev = false;
     const config = {
       level: 'info',
-      ...(isDev && {
-        transport: { target: 'pino-pretty', options: { colorize: true } },
-      }),
+      ...(isDev ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
     };
     expect(config).not.toHaveProperty('transport');
   });
@@ -138,11 +136,11 @@ describe('LOGG-01: environment-conditional transport logic', () => {
     const isDev = true;
     const config = {
       level: 'info',
-      ...(isDev && {
-        transport: { target: 'pino-pretty', options: { colorize: true } },
-      }),
+      ...(isDev ? { transport: { target: 'pino-pretty', options: { colorize: true } } } : {}),
     };
     expect(config).toHaveProperty('transport');
-    expect(config.transport).toMatchObject({ target: 'pino-pretty' });
+    expect((config as { transport?: { target: string } }).transport).toMatchObject({
+      target: 'pino-pretty',
+    });
   });
 });
