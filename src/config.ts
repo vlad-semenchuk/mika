@@ -60,6 +60,7 @@ export const METRICS_PORT = parseInt(
   process.env.METRICS_PORT || '9091',
   10,
 );
+export const METRICS_BIND = process.env.METRICS_BIND || '0.0.0.0';
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(
   process.env.IDLE_TIMEOUT || '1800000',

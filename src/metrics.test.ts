@@ -6,6 +6,7 @@ import {
   registry,
   startMetricsServer,
   stopMetricsServer,
+  getMetricsServer,
   containerSpawnTotal,
   containerFailureTotal,
   containerDurationSeconds,
@@ -198,6 +199,43 @@ describe('subsystem metrics', () => {
     expect(res.body).toContain('nanoclaw_containers_active');
     expect(res.body).toContain('nanoclaw_agent_invocation_total');
     expect(res.body).toContain('nanoclaw_agent_duration_seconds');
+  });
+});
+
+describe('bind address', () => {
+  afterEach(async () => {
+    await stopMetricsServer();
+  });
+
+  function waitForListening(): Promise<void> {
+    return new Promise((resolve) => {
+      const srv = getMetricsServer();
+      if (!srv) return resolve();
+      srv.once('listening', resolve);
+    });
+  }
+
+  // METR-04: startMetricsServer accepts optional bind address parameter
+  it('startMetricsServer accepts a custom bind address and binds to it', async () => {
+    const port = await getPort();
+    startMetricsServer(port, '127.0.0.1');
+    await waitForListening();
+
+    const addr = getMetricsServer()?.address() as import('net').AddressInfo | null;
+    expect(addr?.address).toBe('127.0.0.1');
+
+    const res = await fetchMetrics(port);
+    expect(res.statusCode).toBe(200);
+  });
+
+  // METR-05: default bind address is 0.0.0.0
+  it('startMetricsServer defaults to 0.0.0.0 when no bind address provided', async () => {
+    const port = await getPort();
+    startMetricsServer(port);
+    await waitForListening();
+
+    const addr = getMetricsServer()?.address() as import('net').AddressInfo | null;
+    expect(addr?.address).toBe('0.0.0.0');
   });
 });
 

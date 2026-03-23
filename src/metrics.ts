@@ -64,11 +64,11 @@ let server: http.Server | null = null;
 
 /**
  * Start the Prometheus metrics HTTP server on the given port.
- * Binds to 127.0.0.1 only (not exposed externally).
+ * Binds to the specified address (default 0.0.0.0).
  * Serves GET /metrics → 200 with Prometheus text format.
  * All other paths → 404.
  */
-export function startMetricsServer(port: number): void {
+export function startMetricsServer(port: number, bind = '0.0.0.0'): void {
   server = http.createServer(async (req, res) => {
     if (req.url === '/metrics' && req.method === 'GET') {
       try {
@@ -85,7 +85,15 @@ export function startMetricsServer(port: number): void {
     }
   });
 
-  server.listen(port, '127.0.0.1');
+  server.listen(port, bind);
+}
+
+/**
+ * Returns the underlying HTTP server instance, or null if not started.
+ * Exposed for testing purposes only.
+ */
+export function getMetricsServer(): http.Server | null {
+  return server;
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   DATA_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
+  METRICS_BIND,
   METRICS_PORT,
   POLL_INTERVAL,
   TELEGRAM_BOT_TOKEN,
@@ -420,8 +421,8 @@ async function main(): Promise<void> {
 
   initDatabase();
   logger.info('Database initialized');
-  startMetricsServer(METRICS_PORT);
-  logger.info({ port: METRICS_PORT }, 'Metrics server started');
+  startMetricsServer(METRICS_PORT, METRICS_BIND);
+  logger.info({ port: METRICS_PORT, bind: METRICS_BIND }, 'Metrics server started');
   loadState();
 
   // Graceful shutdown handlers
