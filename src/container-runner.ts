@@ -397,7 +397,10 @@ export async function runContainerAgent(
             resetTimeout();
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
+            outputChain = outputChain.then(async () => {
+              await onOutput(parsed);
+              cleanupMediaDir(mediaDir);
+            });
           } catch (err) {
             logger.warn(
               { groupId: group.folder, groupName: group.name, error: err },
