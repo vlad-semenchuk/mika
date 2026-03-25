@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import { Bot } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
@@ -374,8 +374,8 @@ export class TelegramChannel implements Channel {
     const numericId = jid.replace(/^tg:/, '');
     const MAX_LENGTH = 4096;
 
-    // Split on [STICKER:file_id] markers so stickers and text can be interleaved
-    const parts = text.split(/(\[STICKER:[^\]]+\])/);
+    // Split on [STICKER:file_id] and [image/PHOTO:path] markers so media and text can be interleaved
+    const parts = text.split(/(\[STICKER:[^\]]+\]|\[(?:image|PHOTO|IMAGE|photo):[^\]]+\])/);
 
     for (const part of parts) {
       const stickerMatch = part.match(/^\[STICKER:([^\]]+)\]$/);
@@ -385,6 +385,22 @@ export class TelegramChannel implements Channel {
           logger.info({ jid }, 'Telegram sticker sent');
         } catch (err) {
           logger.error({ jid, err }, 'Failed to send Telegram sticker');
+        }
+        continue;
+      }
+
+      const imageMatch = part.match(/^\[(?:image|PHOTO|IMAGE|photo):([^\]]+)\]$/);
+      if (imageMatch) {
+        const hostPath = this.resolveWorkspacePath(jid, imageMatch[1]);
+        if (hostPath && fs.existsSync(hostPath)) {
+          try {
+            await this.bot.api.sendPhoto(numericId, new InputFile(hostPath));
+            logger.info({ jid, path: hostPath }, 'Telegram photo sent');
+          } catch (err) {
+            logger.error({ jid, path: hostPath, err }, 'Failed to send Telegram photo');
+          }
+        } else {
+          logger.warn({ jid, workspacePath: imageMatch[1], hostPath }, 'Image file not found, skipping');
         }
         continue;
       }
@@ -412,6 +428,22 @@ export class TelegramChannel implements Channel {
         logger.error({ jid, err }, 'Failed to send Telegram message');
       }
     }
+  }
+
+  /**
+   * Map a container workspace path to the host filesystem path.
+   * /workspace/group/media/file.png → GROUPS_DIR/{folder}/media/file.png
+   */
+  private resolveWorkspacePath(jid: string, workspacePath: string): string | null {
+    const group = this.opts.registeredGroups()[jid];
+    if (!group) return null;
+
+    const groupMediaPrefix = '/workspace/group/';
+    if (workspacePath.startsWith(groupMediaPrefix)) {
+      const relativePath = workspacePath.slice(groupMediaPrefix.length);
+      return path.join(GROUPS_DIR, group.folder, relativePath);
+    }
+    return null;
   }
 
   isConnected(): boolean {
