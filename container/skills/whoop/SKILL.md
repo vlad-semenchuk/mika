@@ -9,11 +9,11 @@ Retrieve and analyze fitness data from WHOOP wearables via the official REST API
 
 ## Usage Snippet
 ```bash
-node whoop.mjs profile
-node whoop.mjs recovery --today
-node whoop.mjs sleep --last
-node whoop.mjs workouts --days 7
-node whoop.mjs cycles --days 3
+node scripts/whoop.mjs profile
+node scripts/whoop.mjs recovery --today
+node scripts/whoop.mjs sleep --last
+node scripts/whoop.mjs workouts --days 7
+node scripts/whoop.mjs cycles --days 3
 ```
 
 ## Prerequisites
@@ -48,62 +48,62 @@ chmod 600 ~/.whoop/credentials.json
 
 ```bash
 # Today's recovery
-node whoop.mjs recovery --today
+node scripts/whoop.mjs recovery --today
 
 # Last night's sleep
-node whoop.mjs sleep --last
+node scripts/whoop.mjs sleep --last
 
 # Recent workouts
-node whoop.mjs workouts --days 7
+node scripts/whoop.mjs workouts --days 7
 
 # Daily strain
-node whoop.mjs cycles --days 3
+node scripts/whoop.mjs cycles --days 3
 
 # User profile + body measurements
-node whoop.mjs profile
+node scripts/whoop.mjs profile
 
 # Raw JSON output (any command)
-node whoop.mjs recovery --today --json
+node scripts/whoop.mjs recovery --today --json
 ```
 
 ## Commands
 
 ### profile
 ```bash
-node whoop.mjs profile            # Profile + body measurements
-node whoop.mjs profile --json     # Raw JSON output
+node scripts/whoop.mjs profile            # Profile + body measurements
+node scripts/whoop.mjs profile --json     # Raw JSON output
 ```
 
 ### recovery
 ```bash
-node whoop.mjs recovery --today              # Today's recovery
-node whoop.mjs recovery --days 7              # Past week
-node whoop.mjs recovery --start 2026-01-20 --end 2026-01-27
-node whoop.mjs recovery --limit 10            # Max records
-node whoop.mjs recovery --json                # Raw JSON output
+node scripts/whoop.mjs recovery --today              # Today's recovery
+node scripts/whoop.mjs recovery --days 7              # Past week
+node scripts/whoop.mjs recovery --start 2026-01-20 --end 2026-01-27
+node scripts/whoop.mjs recovery --limit 10            # Max records
+node scripts/whoop.mjs recovery --json                # Raw JSON output
 ```
 
 ### sleep
 ```bash
-node whoop.mjs sleep --last        # Last night
-node whoop.mjs sleep --days 7      # Past week
-node whoop.mjs sleep --start 2026-01-20 --end 2026-01-27
-node whoop.mjs sleep --json        # Raw JSON output
+node scripts/whoop.mjs sleep --last        # Last night
+node scripts/whoop.mjs sleep --days 7      # Past week
+node scripts/whoop.mjs sleep --start 2026-01-20 --end 2026-01-27
+node scripts/whoop.mjs sleep --json        # Raw JSON output
 ```
 
 ### workouts
 ```bash
-node whoop.mjs workouts --days 7              # Past week
-node whoop.mjs workouts --sport running        # Filter by sport
-node whoop.mjs workouts --start 2026-01-20 --end 2026-01-27
-node whoop.mjs workouts --json                 # Raw JSON output
+node scripts/whoop.mjs workouts --days 7              # Past week
+node scripts/whoop.mjs workouts --sport running        # Filter by sport
+node scripts/whoop.mjs workouts --start 2026-01-20 --end 2026-01-27
+node scripts/whoop.mjs workouts --json                 # Raw JSON output
 ```
 
 ### cycles
 ```bash
-node whoop.mjs cycles --today      # Today's strain
-node whoop.mjs cycles --days 3     # Past 3 days
-node whoop.mjs cycles --json       # Raw JSON output
+node scripts/whoop.mjs cycles --today      # Today's strain
+node scripts/whoop.mjs cycles --days 3     # Past 3 days
+node scripts/whoop.mjs cycles --json       # Raw JSON output
 ```
 
 ## Core Data Types
@@ -173,7 +173,7 @@ All collection endpoints support `start`, `end` (ISO 8601), `limit` (max 25), an
 
 ## Scripts
 
-### `whoop-client.mjs`
+### `scripts/whoop-client.mjs`
 Core API client. Features:
 - OAuth token storage and auto-refresh
 - Token expiry tracking (proactive refresh 60s before expiry)
@@ -181,7 +181,7 @@ Core API client. Features:
 - Automatic pagination iterators (`iterRecovery`, `iterSleep`, `iterCycles`, `iterWorkouts`)
 - Zero dependencies (Node 18+ built-in `fetch`)
 
-### `whoop.mjs`
+### `scripts/whoop.mjs`
 CLI entry point with subcommands: `profile`, `recovery`, `sleep`, `workouts`, `cycles`.
 Supports `--today`, `--last`, `--days`, `--start/--end`, `--limit`, `--sport`, `--json` flags.
 
