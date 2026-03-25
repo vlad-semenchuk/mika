@@ -16,13 +16,16 @@ services:
       - prometheus
     volumes:
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/nanoclaw.json:/var/lib/grafana/dashboards/nanoclaw.json:ro
+      - ./monitoring/grafana/import-dashboard.sh:/usr/local/bin/import-dashboard.sh:ro
       - grafana_data:/var/lib/grafana
     ports:
       - "3002:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: ""
+    entrypoint: ["/bin/sh", "-c", "/usr/local/bin/import-dashboard.sh & /run.sh"]
     restart: unless-stopped
 
 volumes:
