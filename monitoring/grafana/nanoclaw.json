@@ -905,7 +905,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "rate(nodejs_gc_duration_seconds_sum[5m])",
-          "legendFormat": "gc time/sec",
+          "legendFormat": "{{kind}}",
           "refId": "A"
         }
       ]
