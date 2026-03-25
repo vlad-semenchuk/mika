@@ -43,6 +43,78 @@ export const containersActive = new Gauge({
   registers: [registry],
 });
 
+// Message flow metrics (MSG-01 to MSG-03)
+
+/** Counts inbound messages per group and channel. */
+export const messagesReceivedTotal = new Counter({
+  name: 'nanoclaw_messages_received_total',
+  help: 'Total inbound messages per group and channel',
+  labelNames: ['group', 'channel'] as const,
+  registers: [registry],
+});
+
+/** Histogram of message processing latency (message arrival → agent start). */
+export const messageProcessingLatencySeconds = new Histogram({
+  name: 'nanoclaw_message_processing_latency_seconds',
+  help: 'Time from oldest pending message to agent processing start in seconds',
+  labelNames: ['group'] as const,
+  buckets: [0.5, 1, 2, 5, 10, 30, 60, 120, 300],
+  registers: [registry],
+});
+
+/** Histogram of messages batched per agent invocation. */
+export const messageBatchSize = new Histogram({
+  name: 'nanoclaw_message_batch_size',
+  help: 'Number of messages batched per agent invocation',
+  labelNames: ['group'] as const,
+  buckets: [1, 2, 3, 5, 10, 20, 50],
+  registers: [registry],
+});
+
+// Queue & concurrency metrics (QUEUE-01 to QUEUE-03)
+
+/** Gauge of groups waiting for a concurrency slot. */
+export const queueWaitingGroups = new Gauge({
+  name: 'nanoclaw_queue_waiting_groups',
+  help: 'Number of groups waiting for a free concurrency slot',
+  registers: [registry],
+});
+
+/** Histogram of time groups spend waiting for a concurrency slot. */
+export const queueWaitSeconds = new Histogram({
+  name: 'nanoclaw_queue_wait_seconds',
+  help: 'Time a group waits for a free concurrency slot in seconds',
+  labelNames: ['group'] as const,
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120],
+  registers: [registry],
+});
+
+/** Counts messages dropped after max retries exceeded. */
+export const maxRetriesExceededTotal = new Counter({
+  name: 'nanoclaw_max_retries_exceeded_total',
+  help: 'Messages dropped after exceeding max retry attempts',
+  labelNames: ['group'] as const,
+  registers: [registry],
+});
+
+// Task execution metrics (TASK-01 to TASK-02)
+
+/** Counts task execution outcomes. */
+export const taskExecutionResultTotal = new Counter({
+  name: 'nanoclaw_task_execution_result_total',
+  help: 'Task execution outcomes by status',
+  labelNames: ['status'] as const,
+  registers: [registry],
+});
+
+/** Histogram of task execution durations. */
+export const taskExecutionDurationSeconds = new Histogram({
+  name: 'nanoclaw_task_execution_duration_seconds',
+  help: 'Scheduled task execution duration in seconds',
+  buckets: [5, 10, 20, 30, 60, 90, 120, 180, 300, 600],
+  registers: [registry],
+});
+
 // Agent invocation metrics (AGNT-01 to AGNT-02)
 
 /** Counts total agent invocations. */

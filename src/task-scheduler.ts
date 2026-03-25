@@ -19,6 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { taskExecutionResultTotal, taskExecutionDurationSeconds } from './metrics.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -220,11 +221,15 @@ async function runTask(
 
   const durationMs = Date.now() - startTime;
 
+  const status = error ? 'error' : 'success';
+  taskExecutionResultTotal.inc({ status });
+  taskExecutionDurationSeconds.observe(durationMs / 1000);
+
   logTaskRun({
     task_id: task.id,
     run_at: new Date().toISOString(),
     duration_ms: durationMs,
-    status: error ? 'error' : 'success',
+    status,
     result,
     error,
   });

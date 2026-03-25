@@ -4,6 +4,7 @@ import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
+import { queueWaitingGroups, queueWaitSeconds, maxRetriesExceededTotal } from './metrics.js';
 
 interface QueuedTask {
   id: string;
@@ -25,6 +26,7 @@ interface GroupState {
   containerName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  waitingSince: number | null;
 }
 
 export class GroupQueue {
@@ -49,6 +51,7 @@ export class GroupQueue {
         containerName: null,
         groupFolder: null,
         retryCount: 0,
+        waitingSince: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -74,6 +77,8 @@ export class GroupQueue {
       state.pendingMessages = true;
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
+        state.waitingSince = Date.now();
+        queueWaitingGroups.set(this.waitingGroups.length);
       }
       logger.debug(
         { groupJid, activeCount: this.activeCount },
@@ -115,6 +120,8 @@ export class GroupQueue {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
+        state.waitingSince = Date.now();
+        queueWaitingGroups.set(this.waitingGroups.length);
       }
       logger.debug(
         { groupJid, taskId, activeCount: this.activeCount },
@@ -204,6 +211,12 @@ export class GroupQueue {
     state.pendingMessages = false;
     this.activeCount++;
 
+    // Record wait time if this group was queued
+    if (state.waitingSince) {
+      queueWaitSeconds.observe({ group: groupJid }, (Date.now() - state.waitingSince) / 1000);
+      state.waitingSince = null;
+    }
+
     logger.debug(
       { groupJid, reason, activeCount: this.activeCount },
       'Starting container for group',
@@ -239,6 +252,12 @@ export class GroupQueue {
     state.runningTaskId = task.id;
     this.activeCount++;
 
+    // Record wait time if this group was queued
+    if (state.waitingSince) {
+      queueWaitSeconds.observe({ group: groupJid }, (Date.now() - state.waitingSince) / 1000);
+      state.waitingSince = null;
+    }
+
     logger.debug(
       { groupJid, taskId: task.id, activeCount: this.activeCount },
       'Running queued task',
@@ -267,6 +286,7 @@ export class GroupQueue {
         { groupJid, retryCount: state.retryCount },
         'Max retries exceeded, dropping messages (will retry on next incoming message)',
       );
+      maxRetriesExceededTotal.inc({ group: groupJid });
       state.retryCount = 0;
       return;
     }
@@ -321,6 +341,7 @@ export class GroupQueue {
       this.activeCount < MAX_CONCURRENT_CONTAINERS
     ) {
       const nextJid = this.waitingGroups.shift()!;
+      queueWaitingGroups.set(this.waitingGroups.length);
       const state = this.getGroup(nextJid);
 
       // Prioritize tasks over messages

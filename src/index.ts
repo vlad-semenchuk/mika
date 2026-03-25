@@ -16,7 +16,15 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
-import { startMetricsServer, stopMetricsServer, agentInvocationTotal, agentDurationSeconds } from './metrics.js';
+import {
+  startMetricsServer,
+  stopMetricsServer,
+  agentInvocationTotal,
+  agentDurationSeconds,
+  messagesReceivedTotal,
+  messageProcessingLatencySeconds,
+  messageBatchSize,
+} from './metrics.js';
 import { TelegramChannel } from './channels/telegram.js';
 import {
   ContainerOutput,
@@ -150,6 +158,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       TRIGGER_PATTERN.test(m.content.trim()),
     );
     if (!hasTrigger) return true;
+  }
+
+  // Record message batch size and processing latency
+  messageBatchSize.observe({ group: group.folder }, missedMessages.length);
+  const oldestMessageTime = new Date(missedMessages[0].timestamp).getTime();
+  const latencySeconds = (Date.now() - oldestMessageTime) / 1000;
+  if (latencySeconds > 0) {
+    messageProcessingLatencySeconds.observe({ group: group.folder }, latencySeconds);
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
@@ -438,7 +454,14 @@ async function main(): Promise<void> {
 
   // Channel callbacks (shared by all channels)
   const channelOpts = {
-    onMessage: (_chatJid: string, msg: NewMessage) => storeMessage(msg),
+    onMessage: (_chatJid: string, msg: NewMessage) => {
+      storeMessage(msg);
+      const group = registeredGroups[msg.chat_jid];
+      if (group) {
+        const ch = findChannel(channels, msg.chat_jid);
+        messagesReceivedTotal.inc({ group: group.folder, channel: ch?.name || 'unknown' });
+      }
+    },
     onChatMetadata: (chatJid: string, timestamp: string, name?: string, channel?: string, isGroup?: boolean) =>
       storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
