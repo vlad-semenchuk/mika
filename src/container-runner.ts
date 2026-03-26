@@ -27,7 +27,6 @@ import {
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 import {
@@ -235,16 +234,15 @@ function buildContainerArgs(
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
 
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-  }
+  // Always give containers a placeholder API key. The credential proxy
+  // handles auth injection:
+  // - API key mode: proxy replaces placeholder with real API key.
+  // - OAuth mode:   proxy strips placeholder and injects a Bearer token
+  //                 read from ~/.claude/.credentials.json (no exchange needed).
+  // Using ANTHROPIC_API_KEY in both modes makes the container CLI skip
+  // the OAuth create_api_key exchange, which requires a scope that gets
+  // lost on token refresh.
+  args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());

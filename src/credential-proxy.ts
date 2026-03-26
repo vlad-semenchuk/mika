@@ -5,10 +5,12 @@
  *
  * Two auth modes:
  *   API key:  Proxy injects x-api-key on every request.
- *   OAuth:    Container CLI exchanges its placeholder token for a temp
- *             API key via /api/oauth/claude_cli/create_api_key.
- *             Proxy injects real OAuth token on that exchange request;
- *             subsequent requests carry the temp key which is valid as-is.
+ *   OAuth:    Containers are given ANTHROPIC_API_KEY=placeholder so the
+ *             CLI skips the OAuth exchange entirely. The proxy strips the
+ *             placeholder x-api-key and injects a real OAuth Bearer token
+ *             (read fresh from ~/.claude/.credentials.json) on every request.
+ *             This avoids the create_api_key exchange which requires a scope
+ *             that gets lost on token refresh.
  */
 import fs from 'fs';
 import os from 'os';
@@ -88,17 +90,14 @@ export function startCredentialProxy(
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
-          // Token is read fresh each request so rotated tokens are picked up.
-          if (headers['authorization']) {
-            delete headers['authorization'];
-            const currentToken = readOAuthToken(envOauthFallback);
-            if (currentToken) {
-              headers['authorization'] = `Bearer ${currentToken}`;
-            }
+          // OAuth passthrough mode: container thinks it has an API key,
+          // but we replace it with a fresh OAuth Bearer token on every request.
+          // This skips the create_api_key exchange entirely.
+          delete headers['x-api-key'];
+          delete headers['authorization'];
+          const currentToken = readOAuthToken(envOauthFallback);
+          if (currentToken) {
+            headers['authorization'] = `Bearer ${currentToken}`;
           }
         }
 
