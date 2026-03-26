@@ -90,14 +90,15 @@ export function startCredentialProxy(
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          // OAuth passthrough mode: container thinks it has an API key,
-          // but we replace it with a fresh OAuth Bearer token on every request.
-          // This skips the create_api_key exchange entirely.
+          // OAuth passthrough mode: container sends x-api-key=placeholder,
+          // we replace it with the real OAuth token (which the Anthropic API
+          // accepts as an x-api-key value). This skips the create_api_key
+          // exchange entirely, avoiding the org:create_api_key scope issue.
           delete headers['x-api-key'];
           delete headers['authorization'];
           const currentToken = readOAuthToken(envOauthFallback);
           if (currentToken) {
-            headers['authorization'] = `Bearer ${currentToken}`;
+            headers['x-api-key'] = currentToken;
           }
         }
 
