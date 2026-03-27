@@ -242,7 +242,8 @@ function buildContainerArgs(
   // Using ANTHROPIC_API_KEY in both modes makes the container CLI skip
   // the OAuth create_api_key exchange, which requires a scope that gets
   // lost on token refresh.
-  args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  // Use a realistic-looking placeholder so the SDK doesn't reject the format
+  args.push('-e', 'ANTHROPIC_API_KEY=sk-ant-api03-proxy-placeholder-key');
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
