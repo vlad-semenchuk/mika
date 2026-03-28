@@ -27,6 +27,7 @@
       "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 },
       "fieldConfig": {
         "defaults": {
+          "decimals": 0,
           "unit": "short",
           "color": { "mode": "thresholds" },
           "thresholds": {
@@ -97,6 +98,7 @@
       "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 },
       "fieldConfig": {
         "defaults": {
+          "decimals": 0,
           "unit": "short",
           "color": { "mode": "thresholds" },
           "thresholds": {
@@ -167,6 +169,7 @@
       "gridPos": { "x": 0, "y": 5, "w": 4, "h": 4 },
       "fieldConfig": {
         "defaults": {
+          "decimals": 0,
           "unit": "short",
           "color": { "mode": "thresholds" },
           "thresholds": {
