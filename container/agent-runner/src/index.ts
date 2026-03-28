@@ -483,6 +483,35 @@ async function main(): Promise<void> {
 
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
   // No real secrets exist in the container environment.
+  // Pre-flight: verify proxy is reachable before starting query.
+  // New containers sometimes fail auth on first attempt (transient).
+  const baseUrl = process.env.ANTHROPIC_BASE_URL;
+  if (baseUrl) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(`${baseUrl}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+            'content-type': 'application/json',
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({ model: 'ping', max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+        });
+        // Any non-401/403 response means auth is working (404 = model not found = auth OK)
+        if (res.status !== 401 && res.status !== 403) {
+          log(`Pre-flight auth check passed (attempt ${attempt}, status ${res.status})`);
+          break;
+        }
+        log(`Pre-flight auth check failed (attempt ${attempt}, status ${res.status})`);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
+      } catch (err) {
+        log(`Pre-flight connectivity check failed (attempt ${attempt}): ${err}`);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
