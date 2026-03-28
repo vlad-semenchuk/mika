@@ -35,19 +35,37 @@ export interface ProxyConfig {
  * Falls back to last known good token, then to .env values.
  */
 let lastGoodToken: string | undefined;
+let lastTokenExpiresAt: number | undefined;
 
 function readOAuthToken(envFallback?: string): string | undefined {
   try {
     const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
     const creds = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
     const token = creds?.claudeAiOauth?.accessToken;
+    const expiresAt = creds?.claudeAiOauth?.expiresAt;
     if (token) {
+      const changed = token !== lastGoodToken;
+      if (changed) {
+        logger.info(
+          {
+            tokenPrefix: token.slice(0, 25),
+            expiresAt: expiresAt ? new Date(expiresAt).toISOString() : 'unknown',
+            expired: expiresAt ? Date.now() > expiresAt : 'unknown',
+          },
+          'OAuth token loaded from credentials file',
+        );
+      }
       lastGoodToken = token;
+      lastTokenExpiresAt = expiresAt;
       return token;
     }
-  } catch {
+  } catch (err) {
     // credentials file missing or being written — use last known good token
+    logger.warn({ err, hasLastGood: !!lastGoodToken }, 'Failed to read credentials file');
     if (lastGoodToken) return lastGoodToken;
+  }
+  if (envFallback) {
+    logger.debug('Using .env fallback token');
   }
   return envFallback;
 }
@@ -117,8 +135,30 @@ export function startCredentialProxy(
             headers,
           } as RequestOptions,
           (upRes) => {
-            res.writeHead(upRes.statusCode!, upRes.headers);
-            upRes.pipe(res);
+            if (upRes.statusCode && upRes.statusCode >= 400) {
+              // Buffer error responses to log the body for debugging
+              const errChunks: Buffer[] = [];
+              upRes.on('data', (c: Buffer) => errChunks.push(c));
+              upRes.on('end', () => {
+                const errBody = Buffer.concat(errChunks).toString('utf-8').slice(0, 500);
+                logger.warn(
+                  {
+                    status: upRes.statusCode,
+                    method: req.method,
+                    path: req.url,
+                    tokenPrefix: (headers['x-api-key'] as string)?.slice(0, 25) || 'none',
+                    tokenExpired: lastTokenExpiresAt ? Date.now() > lastTokenExpiresAt : 'unknown',
+                    body: errBody,
+                  },
+                  'Proxy upstream error response',
+                );
+                res.writeHead(upRes.statusCode!, upRes.headers);
+                res.end(Buffer.concat(errChunks));
+              });
+            } else {
+              res.writeHead(upRes.statusCode!, upRes.headers);
+              upRes.pipe(res);
+            }
           },
         );
 
