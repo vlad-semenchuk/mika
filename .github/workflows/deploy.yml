@@ -25,3 +25,4 @@ jobs:
             npm run build
             XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart nanoclaw
             docker compose up -d --remove-orphans
+            docker compose restart grafana
