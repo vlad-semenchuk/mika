@@ -32,16 +32,22 @@ export interface ProxyConfig {
  * Read the current OAuth access token from ~/.claude/.credentials.json.
  * This file is kept up-to-date by Claude Code's token refresh flow,
  * so reading it on each request ensures we always use a valid token.
- * Falls back to .env values if the credentials file is missing.
+ * Falls back to last known good token, then to .env values.
  */
+let lastGoodToken: string | undefined;
+
 function readOAuthToken(envFallback?: string): string | undefined {
   try {
     const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
     const creds = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
     const token = creds?.claudeAiOauth?.accessToken;
-    if (token) return token;
+    if (token) {
+      lastGoodToken = token;
+      return token;
+    }
   } catch {
-    // credentials file missing or malformed — fall back
+    // credentials file missing or being written — use last known good token
+    if (lastGoodToken) return lastGoodToken;
   }
   return envFallback;
 }
