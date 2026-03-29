@@ -234,16 +234,11 @@ function buildContainerArgs(
     `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
   );
 
-  // Always give containers a placeholder API key. The credential proxy
-  // handles auth injection:
-  // - API key mode: proxy replaces placeholder with real API key.
-  // - OAuth mode:   proxy strips placeholder and injects a Bearer token
-  //                 read from ~/.claude/.credentials.json (no exchange needed).
-  // Using ANTHROPIC_API_KEY in both modes makes the container CLI skip
-  // the OAuth create_api_key exchange, which requires a scope that gets
-  // lost on token refresh.
-  // Use a realistic-looking placeholder so the SDK doesn't reject the format
-  args.push('-e', 'ANTHROPIC_API_KEY=sk-ant-api03-proxy-placeholder-key');
+  // Give containers a placeholder OAuth token. The CLI will send it as
+  // Authorization: Bearer with the oauth beta flag, and the credential proxy
+  // replaces the placeholder with the real token from ~/.claude/.credentials.json.
+  // This matches how the host CLI authenticates natively.
+  args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());

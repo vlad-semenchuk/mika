@@ -484,17 +484,19 @@ async function main(): Promise<void> {
   // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
   // No real secrets exist in the container environment.
   // Pre-flight: verify proxy is reachable before starting query.
-  // New containers sometimes fail auth on first attempt (transient).
+  // Uses Bearer auth with oauth beta flag, matching the CLI's native auth flow.
   const baseUrl = process.env.ANTHROPIC_BASE_URL;
+  const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
   if (baseUrl) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const res = await fetch(`${baseUrl}/v1/messages`, {
+        const res = await fetch(`${baseUrl}/v1/messages?beta=true`, {
           method: 'POST',
           headers: {
-            'x-api-key': process.env.ANTHROPIC_API_KEY || '',
+            'authorization': `Bearer ${oauthToken}`,
             'content-type': 'application/json',
             'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'oauth-2025-04-20',
           },
           body: JSON.stringify({ model: 'ping', max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
         });

@@ -111,11 +111,15 @@ export function startCredentialProxy(
       delete headers['x-api-key'];
       headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
     } else {
-      delete headers['x-api-key'];
-      delete headers['authorization'];
-      const currentToken = readOAuthToken(envOauthFallback);
-      if (currentToken) {
-        headers['x-api-key'] = currentToken;
+      // OAuth passthrough: container CLI sends Authorization: Bearer placeholder
+      // with the oauth beta flag. We replace the placeholder with the real token
+      // from ~/.claude/.credentials.json. This matches the host CLI's native auth.
+      if (headers['authorization']) {
+        delete headers['authorization'];
+        const currentToken = readOAuthToken(envOauthFallback);
+        if (currentToken) {
+          headers['authorization'] = `Bearer ${currentToken}`;
+        }
       }
     }
     return headers;
@@ -150,7 +154,7 @@ export function startCredentialProxy(
                 attempt,
                 method: reqMethod,
                 path: reqUrl,
-                tokenPrefix: (headers['x-api-key'] as string)?.slice(0, 25) || 'none',
+                tokenPrefix: ((headers['authorization'] as string) || (headers['x-api-key'] as string) || '').slice(0, 35) || 'none',
                 tokenExpired: lastTokenExpiresAt ? Date.now() > lastTokenExpiresAt : 'unknown',
                 body: errBody,
               },
@@ -181,7 +185,7 @@ export function startCredentialProxy(
                 attempt,
                 method: reqMethod,
                 path: reqUrl,
-                tokenPrefix: (headers['x-api-key'] as string)?.slice(0, 25) || 'none',
+                tokenPrefix: ((headers['authorization'] as string) || (headers['x-api-key'] as string) || '').slice(0, 35) || 'none',
                 tokenExpired: lastTokenExpiresAt ? Date.now() > lastTokenExpiresAt : 'unknown',
                 body: errBody,
               },
