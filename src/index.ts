@@ -5,11 +5,14 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   MAX_MESSAGES_PER_PROMPT,
+  METRICS_BIND,
+  METRICS_PORT,
   ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
@@ -28,6 +31,7 @@ import {
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
+  PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
   getAllChats,
@@ -61,6 +65,16 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { startCredentialProxy } from './credential-proxy.js';
+import {
+  startMetricsServer,
+  stopMetricsServer,
+  agentInvocationTotal,
+  agentDurationSeconds,
+  messagesReceivedTotal,
+  messageProcessingLatencySeconds,
+  messageBatchSize,
+} from './metrics.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -83,13 +97,13 @@ function ensureOneCLIAgent(jid: string, group: RegisteredGroup): void {
   if (group.isMain) return;
   const identifier = group.folder.toLowerCase().replace(/_/g, '-');
   onecli.ensureAgent({ name: group.name, identifier }).then(
-    (res) => {
+    (res: { created: boolean }) => {
       logger.info(
         { jid, identifier, created: res.created },
         'OneCLI agent ensured',
       );
     },
-    (err) => {
+    (err: unknown) => {
       logger.debug(
         { jid, identifier, err: String(err) },
         'OneCLI agent ensure skipped',
@@ -238,6 +252,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Record message batch size and processing latency
+  messageBatchSize.observe({ group: group.folder }, missedMessages.length);
+  const oldestMessageTime = new Date(missedMessages[0].timestamp).getTime();
+  const latencySeconds = (Date.now() - oldestMessageTime) / 1000;
+  if (latencySeconds > 0) {
+    messageProcessingLatencySeconds.observe({ group: group.folder }, latencySeconds);
+  }
+
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     const triggerPattern = getTriggerPattern(group.trigger);
@@ -341,6 +363,8 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
+  agentInvocationTotal.inc();
+  const agentStart = Date.now();
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
 
@@ -402,6 +426,8 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
+    agentDurationSeconds.observe((Date.now() - agentStart) / 1000);
+
     if (output.status === 'error') {
       // Detect stale/corrupt session — clear it so the next retry starts fresh.
       // The session .jsonl can go missing after a crash mid-write, manual
@@ -432,6 +458,7 @@ async function runAgent(
 
     return 'success';
   } catch (err) {
+    agentDurationSeconds.observe((Date.now() - agentStart) / 1000);
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
   }
@@ -569,8 +596,12 @@ function ensureContainerSystemRunning(): void {
 
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
+  // Start credential proxy (containers route API calls through this when OneCLI is unavailable)
+  await startCredentialProxy(CREDENTIAL_PROXY_PORT, PROXY_BIND_HOST);
   initDatabase();
   logger.info('Database initialized');
+  startMetricsServer(METRICS_PORT, METRICS_BIND);
+  logger.info({ port: METRICS_PORT, bind: METRICS_BIND }, 'Metrics server started');
   loadState();
 
   // Ensure OneCLI agents exist for all registered groups.
@@ -584,6 +615,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    await stopMetricsServer();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -662,6 +694,11 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
+      const group = registeredGroups[chatJid];
+      if (group) {
+        const ch = findChannel(channels, chatJid);
+        messagesReceivedTotal.inc({ group: group.folder, channel: ch?.name || 'unknown' });
+      }
     },
     onChatMetadata: (
       chatJid: string,

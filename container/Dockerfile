@@ -23,12 +23,29 @@ RUN apt-get update && apt-get install -y \
     libdrm2 \
     libxshmfence1 \
     curl \
+    ffmpeg \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Install transcribe-media script
+COPY skills/transcribe-media/scripts/ /opt/transcribe-media/
+RUN cd /opt/transcribe-media && npm install --omit=dev && \
+    ln -s /opt/transcribe-media/transcribe-media.mjs /usr/local/bin/transcribe-media && \
+    chmod +x /opt/transcribe-media/transcribe-media.mjs
+
+# Install yt-dlp via pip (works on both arm64 and x86_64)
+RUN apt-get update && apt-get install -y python3 python3-pip && \
+    pip3 install --break-system-packages yt-dlp && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install download-media script
+COPY skills/download-media/scripts/ /opt/download-media/
+RUN ln -s /opt/download-media/download-media.sh /usr/local/bin/download-media && \
+    chmod +x /opt/download-media/download-media.sh
 
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code

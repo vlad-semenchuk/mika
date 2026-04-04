@@ -9,6 +9,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'ONECLI_URL',
+  'TELEGRAM_BOT_TOKEN',
   'TZ',
 ]);
 
@@ -95,3 +96,28 @@ function resolveConfigTimezone(): string {
   return 'UTC';
 }
 export const TIMEZONE = resolveConfigTimezone();
+
+// Telegram configuration
+export const TELEGRAM_BOT_TOKEN =
+  process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
+
+// Credential proxy (alternative to OneCLI for auth)
+export const CREDENTIAL_PROXY_PORT = parseInt(
+  process.env.CREDENTIAL_PROXY_PORT || '3001',
+  10,
+);
+
+// Prometheus metrics
+export const METRICS_PORT = parseInt(
+  process.env.METRICS_PORT || '9091',
+  10,
+);
+export const METRICS_BIND = process.env.METRICS_BIND || '0.0.0.0';
+
+// Environment variables to forward to agent containers.
+// These are third-party API keys read from .env and passed directly
+// (not via credential proxy, which is Anthropic-only).
+export const CONTAINER_ENV_FORWARD: string[] = [
+  'GROQ_API_KEY',
+  'OPENAI_API_KEY',
+];

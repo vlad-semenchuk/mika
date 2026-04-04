@@ -16,7 +16,12 @@ groups/*
 groups/main/*
 groups/global/*
 !groups/main/CLAUDE.md
+!groups/main/SOUL.md
+!groups/main/STICKERS.md
 !groups/global/CLAUDE.md
+
+# Planning files (local only)
+.planning/
 
 # Secrets
 *.keys.json

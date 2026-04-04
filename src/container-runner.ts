@@ -7,18 +7,22 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  CONTAINER_ENV_FORWARD,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
+  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
   readonlyMountArgs,
@@ -27,6 +31,12 @@ import {
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
+import {
+  containerSpawnTotal,
+  containerFailureTotal,
+  containerDurationSeconds,
+  containersActive,
+} from './metrics.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -244,6 +254,7 @@ async function buildContainerArgs(
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
+  // Falls back to native credential proxy when OneCLI is not available.
   const onecliApplied = await onecli.applyContainerConfig(args, {
     addHostMapping: false, // Nanoclaw already handles host gateway
     agent: agentIdentifier,
@@ -251,10 +262,22 @@ async function buildContainerArgs(
   if (onecliApplied) {
     logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
+    // Fallback: route API traffic through the credential proxy
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
     );
+    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    logger.info({ containerName }, 'Using credential proxy fallback');
+  }
+
+  // Forward whitelisted env vars from .env to containers
+  if (CONTAINER_ENV_FORWARD.length > 0) {
+    const envValues = readEnvFile(CONTAINER_ENV_FORWARD);
+    for (const key of CONTAINER_ENV_FORWARD) {
+      const val = process.env[key] || envValues[key];
+      if (val) args.push('-e', `${key}=${val}`);
+    }
   }
 
   // Runtime-specific args for host gateway resolution
@@ -319,6 +342,9 @@ export async function runContainerAgent(
     },
     'Container mount configuration',
   );
+
+  containerSpawnTotal.inc({ group: group.folder });
+  containersActive.inc();
 
   logger.info(
     {
@@ -462,6 +488,8 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+      containersActive.dec();
+      containerDurationSeconds.observe({ group: group.folder }, duration / 1000);
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
@@ -497,6 +525,7 @@ export async function runContainerAgent(
           return;
         }
 
+        containerFailureTotal.inc({ group: group.folder, reason: 'timeout' });
         logger.error(
           { group: group.name, containerName, duration, code },
           'Container timed out with no output',
@@ -590,6 +619,7 @@ export async function runContainerAgent(
           },
           'Container exited with error',
         );
+        containerFailureTotal.inc({ group: group.folder, reason: 'exit_error' });
 
         resolve({
           status: 'error',
@@ -666,6 +696,8 @@ export async function runContainerAgent(
 
     container.on('error', (err) => {
       clearTimeout(timeout);
+      containersActive.dec();
+      containerFailureTotal.inc({ group: group.folder, reason: 'spawn_error' });
       logger.error(
         { group: group.name, containerName, error: err },
         'Container spawn error',
