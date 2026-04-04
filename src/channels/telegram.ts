@@ -1,9 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 
-import { Bot, InputFile } from 'grammy';
+import { Api, Bot, type Context, InputFile } from 'grammy';
+import type { Message } from '@grammyjs/types';
 
-import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, GROUPS_DIR, TELEGRAM_BOT_TOKEN, TRIGGER_PATTERN } from '../config.js';
 import { logger } from '../logger.js';
 import {
   Channel,
@@ -20,19 +21,25 @@ export interface TelegramChannelOpts {
 }
 
 // Self-register with the channel registry
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-
 registerChannel('telegram', (opts: ChannelOpts): Channel | null => {
   if (!TELEGRAM_BOT_TOKEN) return null;
   return new TelegramChannel(TELEGRAM_BOT_TOKEN, opts);
 });
+
+/** Message fields relevant to forward detection (modern + legacy Bot API). */
+interface ForwardableMessage {
+  forward_origin?: Message.CommonMessage['forward_origin'];
+  // Legacy fields (Bot API < 7.0), not in grammy types
+  forward_from?: { first_name?: string; username?: string };
+  forward_sender_name?: string;
+}
 
 /**
  * Extract the original sender name from a forwarded message, or undefined if
  * the message is not forwarded.  Supports both the modern `forward_origin`
  * (Bot API 7.0+) and the legacy `forward_from` / `forward_sender_name` fields.
  */
-function getForwardedFrom(msg: any): string | undefined {
+function getForwardedFrom(msg: ForwardableMessage): string | undefined {
   // Modern field (Bot API ≥ 7.0)
   const origin = msg.forward_origin;
   if (origin) {
@@ -64,7 +71,7 @@ function getForwardedFrom(msg: any): string | undefined {
  */
 async function downloadTelegramMedia(
   botToken: string,
-  api: any,
+  api: Api,
   fileId: string,
   groupFolder: string,
   msgId: string,
@@ -92,6 +99,7 @@ async function downloadTelegramMedia(
     fs.writeFileSync(localPath, Buffer.from(await response.arrayBuffer()));
 
     return `/workspace/group/media/${filename}`;
+    // eslint-disable-next-line no-catch-all/no-catch-all
   } catch {
     return null;
   }
@@ -101,9 +109,9 @@ async function downloadTelegramMedia(
 interface MediaTypeConfig {
   label: string;
   fallback: string;
-  getFileId: (msg: any) => string | undefined;
+  getFileId: (msg: Message) => string | undefined;
   defaultExt: string;
-  getFilenameOverride?: (msg: any) => string | undefined;
+  getFilenameOverride?: (msg: Message) => string | undefined;
   supportsCaption?: boolean;
 }
 
@@ -176,7 +184,7 @@ export class TelegramChannel implements Channel {
       const chatName =
         chatType === 'private'
           ? ctx.from?.first_name || 'Private'
-          : (ctx.chat as any).title || 'Unknown';
+          : ('title' in ctx.chat ? ctx.chat.title : undefined) || 'Unknown';
 
       ctx.reply(
         `Chat ID: \`tg:${chatId}\`\nName: ${chatName}\nType: ${chatType}`,
@@ -214,7 +222,7 @@ export class TelegramChannel implements Channel {
       const chatName =
         ctx.chat.type === 'private'
           ? senderName
-          : (ctx.chat as any).title || chatJid;
+          : ('title' in ctx.chat ? ctx.chat.title : undefined) || chatJid;
 
       // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
       // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
@@ -267,7 +275,7 @@ export class TelegramChannel implements Channel {
     });
 
     // Handle non-text messages with placeholders so the agent knows something was sent
-    const storeNonText = (ctx: any, placeholder: string) => {
+    const storeNonText = (ctx: Context & { chat: NonNullable<Context['chat']>; message: NonNullable<Context['message']> }, placeholder: string) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) return;
@@ -296,7 +304,8 @@ export class TelegramChannel implements Channel {
 
     // Register download-based media handlers
     for (const [filter, config] of Object.entries(MEDIA_TYPES)) {
-      (this.bot as any).on(filter, async (ctx: any) => {
+      // Filter keys are grammy filter strings but typed as plain strings from Record keys
+      (this.bot as Bot).on(filter as 'message:photo', async (ctx) => {
         const chatJid = `tg:${ctx.chat.id}`;
         const group = this.opts.registeredGroups()[chatJid];
         if (!group) return;
@@ -392,6 +401,7 @@ export class TelegramChannel implements Channel {
         try {
           await this.bot.api.sendSticker(numericId, stickerMatch[1]);
           logger.info({ jid }, 'Telegram sticker sent');
+          // eslint-disable-next-line no-catch-all/no-catch-all
         } catch (err) {
           logger.error({ jid, err }, 'Failed to send Telegram sticker');
         }
@@ -405,6 +415,7 @@ export class TelegramChannel implements Channel {
           try {
             await this.bot.api.sendPhoto(numericId, new InputFile(hostPath));
             logger.info({ jid, path: hostPath }, 'Telegram photo sent');
+            // eslint-disable-next-line no-catch-all/no-catch-all
           } catch (err) {
             logger.error({ jid, path: hostPath, err }, 'Failed to send Telegram photo');
           }
@@ -433,6 +444,7 @@ export class TelegramChannel implements Channel {
           }
         }
         logger.info({ jid, length: trimmed.length }, 'Telegram message sent');
+        // eslint-disable-next-line no-catch-all/no-catch-all
       } catch (err) {
         logger.error({ jid, err }, 'Failed to send Telegram message');
       }
@@ -493,6 +505,7 @@ export class TelegramChannel implements Channel {
       if (!this.bot) return;
       try {
         await this.bot.api.sendChatAction(numericId, 'typing');
+        // eslint-disable-next-line no-catch-all/no-catch-all
       } catch (err) {
         logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
       }
